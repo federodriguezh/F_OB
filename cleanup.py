@@ -98,9 +98,9 @@ def upload_to_kaggle(dataset_name, files):
         return False
 
 def cleanup_files():
-    """Clean up json files when count exceeds 10"""
+    """Clean up json files when count exceeds 8"""
     json_files = glob.glob('data/*.json')
-    if len(json_files) > 10:
+    if len(json_files) > 8:
         # Sort files by creation time
         json_files.sort(key=os.path.getctime)
         
