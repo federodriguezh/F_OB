@@ -2,6 +2,7 @@ import os
 import glob
 import json
 import subprocess
+import hashlib
 from datetime import datetime
 from kaggle.api.kaggle_api_extended import KaggleApi
 
@@ -25,45 +26,47 @@ def upload_to_kaggle(dataset_name, files):
         except:
             existing_file = None
 
-        # Read and combine all files
-        combined_data = []
+        # Track unique records using a hash set to avoid memory issues
+        seen_hashes = set()
+        processed_file = os.path.join('data/kaggle_data', 'processed_data.json')
         
-        # Check size of existing file
+        # First pass: collect hashes from existing data
         if existing_file and os.path.exists(existing_file):
             if os.path.getsize(existing_file) > 1.5 * 1024 * 1024 * 1024:  # 1.5GB in bytes
                 # Move existing file to kaggle_data as chunked
                 chunked_file = os.path.join('data/kaggle_data', 'chunked_data.json')
                 os.rename(existing_file, chunked_file)
             else:
-                # Read existing data if file size is under 1.5GB
-                with open(existing_file, 'r') as f:
-                    for line in f:
-                        combined_data.append(json.loads(line))
+                # Process existing data without loading it all at once
+                with open(existing_file, 'r') as f_in:
+                    with open(processed_file, 'w') as f_out:
+                        for line in f_in:
+                            record = json.loads(line)
+                            record_str = json.dumps(record, sort_keys=True)
+                            record_hash = hashlib.md5(record_str.encode()).hexdigest()
+                            
+                            if record_hash not in seen_hashes:
+                                seen_hashes.add(record_hash)
+                                json.dump(record, f_out)
+                                f_out.write('\n')
 
-        # Add new data
+        # Second pass: process new files, appending to existing processed file
         for file in files:
-            with open(file, 'r') as f:
-                for line in f:
-                    data = json.loads(line)
-                    # Skip records with id=1 (subscription confirmation messages)
-                    if data.get('id') != 1:
-                        combined_data.append(data)
-        
-        # Remove duplicates based on entire record
-        unique_data = []
-        seen = set()
-        for record in combined_data:
-            record_str = json.dumps(record, sort_keys=True)
-            if record_str not in seen:
-                seen.add(record_str)
-                unique_data.append(record)
-                
-        # Write processed data to new file in kaggle_data folder
-        processed_file = os.path.join('data/kaggle_data', 'processed_data.json')
-        with open(processed_file, 'w') as f:
-            for record in unique_data:
-                json.dump(record, f)
-                f.write('\n')
+            with open(file, 'r') as f_in:
+                # Append mode if file exists, otherwise write mode
+                mode = 'a' if os.path.exists(processed_file) else 'w'
+                with open(processed_file, mode) as f_out:
+                    for line in f_in:
+                        data = json.loads(line)
+                        # Skip records with id=1 (subscription confirmation messages)
+                        if data.get('id') != 1:
+                            record_str = json.dumps(data, sort_keys=True)
+                            record_hash = hashlib.md5(record_str.encode()).hexdigest()
+                            
+                            if record_hash not in seen_hashes:
+                                seen_hashes.add(record_hash)
+                                json.dump(data, f_out)
+                                f_out.write('\n')
         
         # Create dataset-metadata.json in kaggle_data folder
         metadata = {
@@ -98,9 +101,9 @@ def upload_to_kaggle(dataset_name, files):
         return False
 
 def cleanup_files():
-    """Clean up json files when count exceeds 8"""
+    """Clean up json files when count exceeds 10"""
     json_files = glob.glob('data/*.json')
-    if len(json_files) > 8:
+    if len(json_files) > 10:
         # Sort files by creation time
         json_files.sort(key=os.path.getctime)
         
